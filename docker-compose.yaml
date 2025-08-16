@@ -1,4 +1,10 @@
+# docker-compose.yml
+version: "3.8"
+
 services:
+  # -------------------------------------------------------
+  # 1. Ollama (unchanged)
+  # -------------------------------------------------------
   ollama:
     image: ollama/ollama:latest
     container_name: ollama
@@ -6,8 +12,9 @@ services:
       - OLLAMA_HOST=0.0.0.0:11434
     volumes:
       - ollama_data:/root/.ollama
-    ports:
-      - "11434:11434"     # Ollama default port
+    # expose only to the reverse‑proxy network
+    expose:
+      - "11434"
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:11434/"]
       interval: 10s
@@ -15,25 +22,9 @@ services:
       retries: 5
     restart: unless-stopped
 
-  # Optional: auto-pull a model once Ollama is up
-  model-init:
-    image: curlimages/curl:latest
-    container_name: model-init
-    depends_on:
-      ollama:
-        condition: service_healthy
-    entrypoint: |
-      sh -c '
-        echo "Waiting for Ollama..." ;
-        until curl -s http://ollama:11434/ ; do sleep 2 ; done ;
-        echo "Pulling model..." ;
-        curl -s -X POST http://ollama:11434/api/pull \
-          -H "Content-Type: application/json" \
-          -d "{\"name\":\"gpt-oss:20b\"}" ;
-        echo "Model pull complete."
-      '
-    restart: "no"
-
+  # -------------------------------------------------------
+  # 2. Open‑WebUI (unchanged except for Traefik labels)
+  # -------------------------------------------------------
   open-webui:
     image: ghcr.io/open-webui/open-webui:main
     container_name: open-webui
@@ -44,13 +35,64 @@ services:
         condition: service_completed_successfully
     environment:
       - OLLAMA_BASE_URL=http://ollama:11434
-    ports:
-      - "8080:8080"       # Open WebUI default port
+    # expose only to the reverse‑proxy network
+    expose:
+      - "8080"
     volumes:
       - openwebui_data:/app/backend/data
+    labels:
+      # Traefik routing
+      - "traefik.enable=true"
+      - "traefik.http.routers.open-webui.rule=Host(`YOUR_DOMAIN.com`)"
+      - "traefik.http.routers.open-webui.entrypoints=websecure"
+      - "traefik.http.routers.open-webui.tls.certresolver=letsEncrypt"
+      - "traefik.http.services.open-webui.loadbalancer.server.port=8080"
+    restart: unless-stopped
+
+  # -------------------------------------------------------
+  # 3. Model‑init (unchanged)
+  # -------------------------------------------------------
+  # model-init:
+  #   image: curlimages/curl:latest
+  #   container_name: model-init
+  #   depends_on:
+  #     ollama:
+  #       condition: service_healthy
+  #   entrypoint: |
+  #     sh -c '
+  #       echo "Waiting for Ollama..." ;
+  #       until curl -s http://ollama:11434/ ; do sleep 2 ; done ;
+  #       echo "Pulling model..." ;
+  #       curl -s -X POST http://ollama:11434/api/pull \
+  #         -H "Content-Type: application/json" \
+  #         -d "{\"name\":\"gpt-oss:20b\"}" ;
+  #       echo "Model pull complete."
+  #     '
+  #   restart: "no"
+
+  # -------------------------------------------------------
+  # 4. Traefik (reverse‑proxy + Let’s Encrypt)
+  # -------------------------------------------------------
+  traefik:
+    image: traefik:v2.9
+    container_name: traefik
+    command:
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--certificatesresolvers.letsEncrypt.acme.tlschallenge=true"
+      - "--certificatesresolvers.letsEncrypt.acme.email=you@yourdomain.com"
+      - "--certificatesresolvers.letsEncrypt.acme.storage=/letsencrypt/acme.json"
+    ports:
+      - "80:80"     # HTTP (needed for Let's Encrypt challenge)
+      - "443:443"   # HTTPS
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+      - "letsencrypt:/letsencrypt"
     restart: unless-stopped
 
 volumes:
   ollama_data:
   openwebui_data:
-
+  letsencrypt:

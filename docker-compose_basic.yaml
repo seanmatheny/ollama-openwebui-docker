@@ -1,0 +1,56 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0:11434
+    volumes:
+      - ollama_data:/root/.ollama
+    ports:
+      - "11434:11434"     # Ollama default port
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:11434/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Optional: auto-pull a model once Ollama is up
+  model-init:
+    image: curlimages/curl:latest
+    container_name: model-init
+    depends_on:
+      ollama:
+        condition: service_healthy
+    entrypoint: |
+      sh -c '
+        echo "Waiting for Ollama..." ;
+        until curl -s http://ollama:11434/ ; do sleep 2 ; done ;
+        echo "Pulling model..." ;
+        curl -s -X POST http://ollama:11434/api/pull \
+          -H "Content-Type: application/json" \
+          -d "{\"name\":\"gpt-oss:20b\"}" ;
+        echo "Model pull complete."
+      '
+    restart: "no"
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: open-webui
+    depends_on:
+      ollama:
+        condition: service_healthy
+      model-init:
+        condition: service_completed_successfully
+    environment:
+      - OLLAMA_BASE_URL=http://ollama:11434
+    ports:
+      - "8080:8080"       # Open WebUI default port
+    volumes:
+      - openwebui_data:/app/backend/data
+    restart: unless-stopped
+
+volumes:
+  ollama_data:
+  openwebui_data:
+
