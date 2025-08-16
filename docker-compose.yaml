@@ -8,31 +8,59 @@ services:
   ollama:
     image: ollama/ollama:latest
     container_name: ollama
+    # Enable NVIDIA GPU access
+    gpus: all
     environment:
+      # Bind the server to all interfaces; no scheme here (do NOT use http://)
       - OLLAMA_HOST=0.0.0.0:11434
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
     volumes:
       - ollama_data:/root/.ollama
     # expose only to the reverse‑proxy network
     expose:
       - "11434"
+    ports:
+      - "11434:11434"
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:11434/"]
+      # Use the Ollama CLI and unset OLLAMA_HOST so it connects to 127.0.0.1
+      test: ["CMD-SHELL", "env -u OLLAMA_HOST ollama list >/dev/null 2>&1"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      start_period: 90s   # give GPU init time
+      retries: 12
     restart: unless-stopped
 
   # -------------------------------------------------------
   # 2. Open‑WebUI (unchanged except for Traefik labels)
   # -------------------------------------------------------
+  # Optional: auto-pull a model once Ollama is up - much slower than gui
+  #  model-init:
+  #    image: curlimages/curl:latest
+  #    container_name: model-init
+  #    depends_on:
+  #      ollama:
+  #        condition: service_healthy
+  #    entrypoint: |
+  #      sh -c '
+  #        echo "Waiting for Ollama..." ;
+  #        until curl -s http://ollama:11434/ ; do sleep 2 ; done ;
+  #        echo "Pulling model..." ;
+  #        curl -s -X POST http://ollama:11434/api/pull \
+  #          -H "Content-Type: application/json" \
+  #          -d "{\"name\":\"gpt-oss:20b\"}" ;
+  #        echo "Model pull complete."
+  #      '
+  #    restart: "no"
+
   open-webui:
     image: ghcr.io/open-webui/open-webui:main
     container_name: open-webui
     depends_on:
       ollama:
         condition: service_healthy
-      model-init:
-        condition: service_completed_successfully
+          #      model-init:
+          #      condition: service_completed_successfully
     environment:
       - OLLAMA_BASE_URL=http://ollama:11434
     # expose only to the reverse‑proxy network
@@ -43,7 +71,8 @@ services:
     labels:
       # Traefik routing
       - "traefik.enable=true"
-      - "traefik.http.routers.open-webui.rule=Host(`YOUR_DOMAIN.com`)"
+      - "traefik.http.routers.open-webui.rule=Host(`ai.sonka.cloud.edu.au`)"
+      - "traefik.http.routers.open-webui.rule=Host(`${DNSHOSTNAME}`)"
       - "traefik.http.routers.open-webui.entrypoints=websecure"
       - "traefik.http.routers.open-webui.tls.certresolver=letsEncrypt"
       - "traefik.http.services.open-webui.loadbalancer.server.port=8080"
@@ -82,7 +111,7 @@ services:
       - "--entrypoints.web.address=:80"
       - "--entrypoints.websecure.address=:443"
       - "--certificatesresolvers.letsEncrypt.acme.tlschallenge=true"
-      - "--certificatesresolvers.letsEncrypt.acme.email=you@yourdomain.com"
+      - "--certificatesresolvers.letsEncrypt.acme.email=$EMAIL"
       - "--certificatesresolvers.letsEncrypt.acme.storage=/letsencrypt/acme.json"
     ports:
       - "80:80"     # HTTP (needed for Let's Encrypt challenge)
