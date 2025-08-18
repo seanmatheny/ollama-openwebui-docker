@@ -22,15 +22,16 @@ services:
     depends_on:
       ollama:
         condition: service_healthy
-    entrypoint: |
-      sh -c '
-        echo "Waiting for Ollama..." ;
-        until curl -s http://ollama:11434/ ; do sleep 2 ; done ;
-        echo "Pulling model..." ;
-        curl -s -X POST http://ollama:11434/api/pull \
-          -H "Content-Type: application/json" \
-          -d "{\"name\":\"gpt-oss:20b\"}" ;
-        echo "Model pull complete."
+    # takes far too long - much quicker to download the model within the webui
+    # entrypoint: | 
+    #   sh -c '
+    #     echo "Waiting for Ollama..." ;
+    #     until curl -s http://ollama:11434/ ; do sleep 2 ; done ;
+    #     echo "Pulling model..." ;
+    #     curl -s -X POST http://ollama:11434/api/pull \
+    #       -H "Content-Type: application/json" \
+    #       -d "{\"name\":\"gpt-oss:20b\"}" ;
+    #     echo "Model pull complete."
       '
     restart: "no"
 
